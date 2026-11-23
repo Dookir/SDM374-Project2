@@ -1,0 +1,34 @@
+SDM374 GPU 容器文件存储说明
+
+所有组内项目文件只允许保存在本组的 /nfs1 及其子目录。源码、Conda 环境和包缓存、原始与处理后的数据集、模型权重、检查点、训练结果和日志都适用这一要求。
+
+Pod 重启或重建时，保存在 /root、/tmp 等容器本地目录中的项目文件可能丢失。/nfs1 挂载的是本组的持久存储，Pod 重新挂载后，可以继续使用保存在其中的文件。
+
+/nfs2 指向本组同一个 NFS 目录，日常操作统一使用 /nfs1。
+
+建议目录
+
+  /nfs1/code/          代码仓库和配置
+  /nfs1/datasets/      数据集及预处理结果
+  /nfs1/conda/envs/    Conda 环境
+  /nfs1/conda/pkgs/    Conda 包缓存
+  /nfs1/checkpoints/   模型权重和训练检查点
+  /nfs1/outputs/       实验结果和训练输出
+  /nfs1/logs/          日志
+
+SSH 登录后，可在容器的 Bash 终端中运行以下命令。
+
+  mkdir -p /nfs1/{code,datasets,conda/envs,conda/pkgs,checkpoints,outputs,logs,.cache/pip}
+  cd /nfs1
+  export CONDA_PKGS_DIRS=/nfs1/conda/pkgs
+  export PIP_CACHE_DIR=/nfs1/.cache/pip
+  conda create --prefix /nfs1/conda/envs/myenv python=3.11
+  conda activate /nfs1/conda/envs/myenv
+
+将 myenv 和 Python 版本改成项目需要的值。后续登录时重新设置上面两个缓存变量，再按完整路径激活已有环境。
+
+上传或克隆代码时，把目标目录设在 /nfs1/code。用 VS Code 远程编辑时，打开该路径下的项目目录。启动训练前，把数据路径、权重路径、输出和日志路径都配置为 /nfs1 下的绝对路径。
+
+Conda 官方命令参考
+  https://docs.conda.io/projects/conda/en/stable/commands/create.html
+  https://docs.conda.io/projects/conda/en/stable/user-guide/configuration/settings.html#pkgs-dirs-specify-package-directories
