@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 import tempfile
@@ -8,7 +9,7 @@ import numpy as np
 import torch
 
 from .graph import route_length, validate_tour
-from .search import read_lkh_tour, write_instance
+from .search import read_lkh_tour, run_with_progress, write_instance
 
 
 class EAX:
@@ -16,21 +17,51 @@ class EAX:
         self.executable = Path(executable).resolve(strict=True)
         self.scratch = Path(scratch).resolve()
 
-    def run(self, points, seconds, population=50, offspring=20):
+    def run(self, points, seconds, population=50, offspring=20, seed=None, on_tour=None):
         if len(points) < 51:
             raise ValueError("The upstream EAX implementation assumes at least 51 cities")
         with tempfile.TemporaryDirectory(dir=self.scratch, prefix="eax-") as tmp:
             folder = Path(tmp)
-            write_instance(folder / "instance.tsp", points)
-            process = subprocess.run(
-                [str(self.executable), "1", "result", str(population), str(offspring), "instance.tsp"],
-                cwd=folder, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                timeout=seconds, text=True, check=False)
-            if process.returncode:
-                raise RuntimeError(f"EAX failed: {process.stdout[-2000:]}")
-            rows = (folder / "result_BestSol").read_text().splitlines()
-            tours = [validate_tour(np.fromstring(line, sep=" ", dtype=np.int64) - 1, len(points))
-                     for line in rows[1::2]]
+            command = [str(self.executable), "1", "result", str(population), str(offspring), "instance.tsp"]
+            env = os.environ.copy()
+            order = np.arange(len(points))
+            if seed is not None:
+                env.update(PROJECT2_EAX_SEED=str(seed % 2147483647), PROJECT2_EAX_PROGRESS="1")
+                order = np.random.default_rng(seed).permutation(len(points))
+            write_instance(folder / "instance.tsp", points[order])
+
+            def read_tours(path):
+                if path.exists():
+                    for line in path.read_text().splitlines()[1::2]:
+                        try:
+                            tour = validate_tour(np.fromstring(line, sep=" ", dtype=np.int64) - 1, len(points))
+                        except ValueError:
+                            continue  # The final checkpoint can be partially written.
+                        yield order[tour]
+
+            observed = 0
+
+            def progress():
+                nonlocal observed
+                tours = list(read_tours(folder / "progress_BestSol"))
+                for tour in tours[observed:]:
+                    on_tour(tour)
+                observed = len(tours)
+
+            timeout = None
+            try:
+                process = run_with_progress(command, cwd=folder, timeout=seconds, env=env,
+                                            callback=progress if on_tour is not None else None)
+                if process.returncode:
+                    raise RuntimeError(f"EAX failed: {process.stdout[-2000:]}")
+            except subprocess.TimeoutExpired as error:
+                timeout = error
+            tours = [tour for name in ("result_BestSol", "progress_BestSol")
+                     for tour in read_tours(folder / name)]
+            if not tours:
+                if timeout is not None:
+                    raise timeout
+                raise RuntimeError("EAX did not return a complete tour")
             return min(tours, key=lambda tour: route_length(points, tour))
 
 
